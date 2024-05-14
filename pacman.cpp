@@ -1,85 +1,139 @@
 #include "SFML/Graphics.hpp"
+#include <pthread.h>
+#include <stdlib.h>
+#include <unistd.h>
 #include <fstream>
 #include <iostream>
 #include <vector>
 #include <cmath>
+#include <queue>
+#include <mutex>
+#include <semaphore.h>
 
 using namespace std;
 using namespace sf;
 
+
+RenderWindow window(sf::VideoMode(576, 432), "Pacman");
+
+
+Vector2i playerLastPing;
 const int mapSize = 27;
 int mapArray[mapSize][mapSize];
 float dt;
-float powerPallet = 0;
+float powerPallet = 15;
 int score = 0;
+bool arrayKeysKhali[4];
+
+sem_t playerPath;
+sem_t key;
+sem_t permit;
+sem_t SpeedGhost;
+int noTextures = 19;
+sf::Sprite *mapSprites = new sf::Sprite[noTextures];
+
+mutex mtx;
+int curr_power_pellets=4;
+int max_power_pellets=4;
+queue<Vector2i> location;
+
 
 bool canMove(int x, int y) {
-    return (mapArray[y][x] == 1) || (mapArray[y][x] == 14) || (mapArray[y][x] == 15);
+    return (mapArray[y][x] == 1) || (mapArray[y][x] == 14) || (mapArray[y][x] == 15) || (mapArray[y][x] == 16) || (mapArray[y][x] == 17);
 }
 
-struct Player{
+
+
+struct Player
+{
     Vector2i pos;
     Vector2i targetPos;
     int dir;
     int targetDir;
     float speed;
     Sprite sprite;
-    Player(Vector2i pos,Vector2i target_pos, int dir , int target_dir , float speed , Texture& texture){
+    float plTimer;
+    Clock plClock;
+    vector<Vector2i> path;
+    bool powerMode;
+    Clock powerClock;
+    float powerDuration;
+
+    Player() {}
+
+    void initPlayer(Vector2i pos, Vector2i target_pos, int dir, int target_dir, float speed, Texture& texture) {
         this->pos = pos;
         this->dir = dir;
         this->targetPos = target_pos;
         this->targetDir = target_dir;
         this->speed = speed;
         this->sprite.setTexture(texture);
-        this->sprite.setPosition(pos.x * 16,pos.y * 16);
+        this->sprite.setPosition(pos.x * 16, pos.y * 16);
+        this->path.push_back(pos);
+        playerLastPing = pos;
+        powerMode = false;
+        powerDuration = 10.0f;
     }
-    void playerMove(){
-        if(mapArray[pos.y][pos.x] == 14){
+
+    void playerMove() {
+        if (mapArray[pos.y][pos.x] == 14) {
             score++;
             mapArray[pos.y][pos.x] = 1;
         }
-        if(pos.x == 26 && dir == 4){
+        if (pos.x == 26 && dir == 4) {
             pos.x = 0;
-            sprite.setPosition(0,sprite.getPosition().y);
+            sprite.setPosition(0, sprite.getPosition().y);
             return;
         }
-        else if(pos.x == 0 && dir == 3){
+        else if (pos.x == 0 && dir == 3) {
             pos.x = 26;
-            sprite.setPosition(26 * 16 , sprite.getPosition().y);
+            sprite.setPosition(26 * 16, sprite.getPosition().y);
             return;
         }
-        if(canMove(pos.x+targetPos.x,pos.y+targetPos.y)){
+        if (canMove(pos.x + targetPos.x, pos.y + targetPos.y)) {
             dir = targetDir;
+        }
+        ///   FOR POWER-PELLET
+        if (mapArray[pos.y][pos.x] == 15 &&!powerMode ) {
+            score += 50;
+            mapArray[pos.y][pos.x] = 1;
+            powerMode = true;
+            powerClock.restart();
+
+            mtx.lock();
+            curr_power_pellets--;
+            location.push(pos);
+            mtx.unlock();
         }
 
         switch (dir)
         {
         case 1:
-            if(canMove(pos.x , pos.y - 1)){
-                if(sprite.getPosition().y / 16 < pos.y - 1)
+            if (canMove(pos.x, pos.y - 1)) {
+                if (sprite.getPosition().y / 16 < pos.y - 1)
                     pos.y--;
-                sprite.move(0 , speed * -dt);
+                sprite.move(0, speed * -plTimer);
             }
             break;
         case 2:
-            if(canMove(pos.x , pos.y + 1)){
-                if(sprite.getPosition().y / 16 > pos.y + 1)
+            if (canMove(pos.x, pos.y + 1)) {
+                if (sprite.getPosition().y / 16 > pos.y + 1)
                     pos.y++;
-                sprite.move(0 , speed * dt);
+                sprite.move(0, speed * plTimer);
             }
             break;
         case 3:
-            if(canMove(pos.x - 1 , pos.y)){
-                if(sprite.getPosition().x / 16 < pos.x - 1)
+            if (canMove(pos.x - 1, pos.y)) {
+                if (sprite.getPosition().x / 16 < pos.x - 1)
                     pos.x--;
-                sprite.move(speed * -dt , 0);
+                sprite.move(speed * -plTimer, 0);
             }
             break;
         case 4:
-            if(canMove(pos.x + 1 , pos.y)){
-                if(sprite.getPosition().x / 16 > pos.x + 1)
+            if (canMove(pos.x + 1, pos.y)) {
+                if (sprite.getPosition().x / 16 > pos.x + 1)
                     pos.x++;
-                sprite.move(speed * dt , 0);
+                sprite.move(speed * plTimer, 0);
             }
             break;
         default:
@@ -87,30 +141,38 @@ struct Player{
         }
     }
 
-    void setTarget(Keyboard::Key key){
-        if(Keyboard::isKeyPressed(Keyboard::W)){
+    void updatePowerMode() {
+        if (powerMode && powerClock.getElapsedTime().asSeconds() >= powerDuration) {
+            powerMode = false;
+        }
+        
+    }
+
+    void setTarget(Keyboard::Key key) {
+        if (Keyboard::isKeyPressed(Keyboard::W)) {
             targetPos.x = 0;
             targetPos.y = -1;
-            targetDir = 1; 
+            targetDir = 1;
         }
-        if(Keyboard::isKeyPressed(Keyboard::S)){
+        if (Keyboard::isKeyPressed(Keyboard::S)) {
             targetPos.x = 0;
-            targetPos.y = +1;
-            targetDir = 2; 
+            targetPos.y = 1;
+            targetDir = 2;
         }
-        if(Keyboard::isKeyPressed(Keyboard::A)){
+        if (Keyboard::isKeyPressed(Keyboard::A)) {
             targetPos.x = -1;
             targetPos.y = 0;
-            targetDir = 3; 
+            targetDir = 3;
         }
-        if(Keyboard::isKeyPressed(Keyboard::D)){
+        if (Keyboard::isKeyPressed(Keyboard::D)) {
             targetPos.x = 1;
             targetPos.y = 0;
-            targetDir = 4; 
+            targetDir = 4;
         }
     }
-    void killPlayer(){
-        sprite.setPosition(13 * 16,23 * 16);
+
+    void killPlayer() {
+        sprite.setPosition(13 * 16, 23 * 16);
         targetDir = 0;
         targetPos.x = 0;
         targetPos.y = 0;
@@ -121,6 +183,317 @@ struct Player{
 };
 
 
+struct Ghosts {
+    Vector2i pos;
+    Vector2i targetPos;
+    int dir;
+    int targetDir;
+    float speed;
+    Sprite sprite;
+    float gtimer;
+    Clock gtClock;
+    bool keyFlag;
+    bool permitFlag;
+    bool frightened;
+    Clock frightenedClock;
+    float frightenedDuration;
+    Texture normalTexture; // Store the normal texture
+    Texture frightenedTexture; // Store the frightened texture
+
+    Ghosts() : frightened(false), frightenedDuration(10.0f), dir(0), targetDir(0), keyFlag(false), permitFlag(false) {}
+
+    void initGhost(Vector2i pos, Texture& normalTexture, Texture& frightenedTexture) {
+        this->pos = pos;
+        this->normalTexture = normalTexture;
+        this->frightenedTexture = frightenedTexture;
+        this->sprite.setTexture(normalTexture);
+        this->sprite.setPosition(pos.x * 16, pos.y * 16);
+        this->speed = 50.f;
+    }
+
+    bool GateCheck(int x, int y) {
+        if (mapArray[y][x] == 18) {
+            return keyFlag && permitFlag;
+        }
+        return false;
+    }
+
+
+    void moveGhost(){
+        if (frightened) {
+            sprite.setColor(Color::Blue);
+        } else {
+            sprite.setColor(Color::White);
+        }
+            if(pos.y > targetPos.y){
+                dir = 1;
+            }
+            else if(pos.y < targetPos.y){
+                dir = 2;
+            }
+            else if(pos.x > targetPos.x){
+                dir = 3;
+            }
+            else if(pos.x < targetPos.x){
+                dir = 4;
+            }
+
+        //}
+        // else{
+        //     int randomDir = rand() % 5;
+        //     dir = randomDir;
+        // }
+        //cout<<"dir"<<dir<<endl;
+        switch (dir)
+        {
+        case 1:
+            if(canMove(pos.x , pos.y - 1) || GateCheck(pos.x , pos.y - 1)){
+                if(sprite.getPosition().y / 16 < pos.y - 0.5)
+                    pos.y--;
+                sprite.move(0 , speed * -gtimer);
+            }
+            break;
+        case 2:
+            if(canMove(pos.x , pos.y + 1) || GateCheck(pos.x , pos.y + 1)){
+                if(sprite.getPosition().y / 16 > pos.y + 0.5)
+                    pos.y++;
+                sprite.move(0 , speed * gtimer);
+            }
+            break;
+        case 3:
+            if(canMove(pos.x - 1 , pos.y) || GateCheck(pos.x - 1, pos.y)){
+                if(sprite.getPosition().x / 16 < pos.x - 0.5)
+                    pos.x--;
+                sprite.move(speed * -gtimer , 0);
+            }
+            break;
+        case 4:
+            if(canMove(pos.x + 1 , pos.y) || GateCheck(pos.x + 1, pos.y)){
+                if(sprite.getPosition().x / 16 > pos.x + 0.5)
+                    pos.x++;
+                sprite.move(speed * gtimer , 0);
+            }
+            break;
+        default:
+            break;
+        }
+    }
+
+    void updateFrightenedMode() {
+        if (frightened && frightenedClock.getElapsedTime().asSeconds() >= frightenedDuration) {
+            frightened = false;
+        }
+    }
+
+
+    void resetPosition() {
+        pos.x = 13;
+        pos.y = 13;
+        sprite.setPosition(pos.x * 16, pos.y * 16);
+    }
+
+
+    bool CheckFreed(){
+        return keyFlag && permitFlag;
+    }
+};
+
+const int numGhosts = 4;
+Ghosts ghosts[4];
+Player pacman;
+
+
+
+//Reader Writer 
+void* Trail(void* arg){
+    int type = *(int*) arg;
+    if(type == 0){
+        while(window.isOpen()){
+    //cout<<*(int*)arg<<endl;
+        sem_wait(&playerPath);
+            if(pacman.path.back() != pacman.pos)
+                pacman.path.push_back(pacman.pos);
+        sem_post(&playerPath);
+        }
+    }
+    else {
+        while(window.isOpen()){
+            //cout<<*(int*)arg<<endl;
+        sem_wait(&playerPath);
+            if(!pacman.path.empty()){
+                playerLastPing = pacman.path.front();
+                pacman.path.erase(pacman.path.begin());
+            }
+
+        sem_post(&playerPath);
+        }
+    }
+    return NULL;
+}
+
+
+//Dinning Philosipher and Producer Consumer
+void* consume(void* arg){
+    int i = *(int*)arg;
+    Vector2i keysPos;
+    Vector2i PermitsPos;
+    while(true && !ghosts[i].CheckFreed()){
+        //if(arrayKeysKhali[i])
+        //cout<<mapArray[ghosts[i].pos.x][ghosts[i].pos.y]<<endl;
+
+        if(!arrayKeysKhali[i] && mapArray[ghosts[i].pos.y][ghosts[i].pos.x] == 16){
+            sem_wait(&key);
+            //cout<<"Obtained KEy "<<i<<endl;
+            //ghosts[i].sprite.setColor(Color::Red);
+            mapArray[ghosts[i].pos.y][ghosts[i].pos.x] = 1;
+            keysPos = ghosts[i].pos;
+            ghosts[i].keyFlag = true;
+            arrayKeysKhali[i] = true;
+            
+        }
+        if(arrayKeysKhali[i]&& mapArray[ghosts[i].pos.y][ghosts[i].pos.x] == 17){
+                //cout<<"Permit Seen"<<i<<endl;
+            sem_wait(&permit);
+            //cout<<"Obtained Permit "<<i<<endl;
+            mapArray[ghosts[i].pos.y][ghosts[i].pos.x] = 1;
+            PermitsPos = ghosts[i].pos;
+            ghosts[i].permitFlag = true;
+            sem_post(&permit);
+            mapArray[PermitsPos.y][PermitsPos.x] = 17;
+            sem_post(&key);
+            mapArray[keysPos.y][keysPos.x] = 16;
+         }
+    }
+}
+
+
+//Speed Boost Problem
+
+
+void * SpeedUp(void* arg){
+    int idx = *(int*)arg;
+    Clock clockSpeed;
+    float dtSpeed = 0;
+    while(window.isOpen()){
+        sem_wait(&SpeedGhost);
+        if(dtSpeed > 100.f){
+            ghosts[idx].speed = 100.f;
+        }  
+        while (dtSpeed < 10000.f)
+        {
+            dtSpeed += 0.0001f;
+        }
+        dtSpeed = 0;
+        ghosts[idx].speed = 50.f;
+        sem_post(&SpeedGhost);    
+    }
+
+}
+
+
+// Function to find the shortest path using Breadth-First Search (BFS)
+Vector2i findShortestPath(Vector2i start , Vector2i end, int idx){
+    int dx[] = {0, 0, -1, 1};
+    int dy[] = {-1, 1, 0, 0};
+    bool visited[mapSize][mapSize] = {false};
+    queue<Vector2i>q;
+    Vector2i parent[mapSize][mapSize];
+    Vector2i child;
+    q.push(start);
+    visited[start.x][start.y] = true;
+     while (!q.empty()) {
+        Vector2i curr = q.front();
+        q.pop();
+
+        if (curr == end) {
+            
+            while (!(curr.x == start.x && curr.y == start.y)) {
+                child = curr;
+                curr = {parent[curr.x][curr.y].x, parent[curr.x][curr.y].y};
+            }
+           
+            return child;
+        }
+
+        for (int i = 0; i < 4; ++i) {
+            int nx = curr.x + dx[i];
+            int ny = curr.y + dy[i];
+            if ((canMove(nx, ny)||  ghosts[idx].GateCheck(nx,ny))&& !visited[nx][ny]) {
+                visited[nx][ny] = true;
+                parent[nx][ny] = {curr.x, curr.y};
+                q.push({nx, ny});
+            }
+        }
+    }
+    return start;
+    
+}
+//Thread function to handle the ghost movement
+void *ghostMovement(void *arg) {
+    int ghostIndex = *((int*)arg);
+    
+        int* i = new int;
+        *i = (ghostIndex + 1);
+        pthread_t pathTarget;
+        pthread_create(&pathTarget , NULL , Trail , (void*)(i));
+        Clock timerClock;
+        pthread_t keyPermit;
+        pthread_t spGhostId;
+        int *idx = new int;
+        *idx = ghostIndex;
+        pthread_create(&keyPermit , NULL , consume , (void*)(idx));
+        pthread_create(&spGhostId , NULL , SpeedUp , (void*)(idx));
+
+        float timer = timerClock.restart().asSeconds();
+    while (window.isOpen()) {
+        ghosts[ghostIndex].gtimer = ghosts[ghostIndex].gtClock.restart().asSeconds();
+        //cout<<dtGhost<<endl;
+        if( ghosts[ghostIndex].CheckFreed()){
+        // Calculate the shortest path to the player's position using BFS
+        Vector2i ghostTarget = findShortestPath(ghosts[ghostIndex].pos, playerLastPing , ghostIndex);
+        ghosts[ghostIndex].targetPos = ghostTarget;
+        
+        }
+        else {
+            if(timer > 200.f){
+                timer = 0;
+            int randomX = rand()%7 + 10;
+            int randomY = rand()%5 + 11;
+            ghosts[ghostIndex].targetPos.x = randomX;
+            ghosts[ghostIndex].targetPos.y = randomY;
+            //if(ghostIndex == 1)
+            //cout<<ghosts[ghostIndex].targetPos.x <<" "<<ghosts[ghostIndex].targetPos.x<<endl;
+            }
+            timer += 0.0001;
+
+        }
+
+        ghosts[ghostIndex].moveGhost();
+    }
+    return NULL;
+}
+
+
+
+//Thread function to handle the player movement
+
+void *playerManagement(void *arg){
+        pthread_t pathid;
+        int * i = new int;
+        *i=0;
+        pthread_create(&pathid , NULL , Trail , (void*) i);
+    while (window.isOpen())
+    {
+        pacman.plTimer = pacman.plClock.restart().asSeconds();
+        pacman.playerMove();
+        //critical section
+        
+
+
+
+    }
+    return NULL;
+}
 
 // Load map textures
 void loadMapTextures(sf::Texture *&texts, int size) {
@@ -128,162 +501,27 @@ void loadMapTextures(sf::Texture *&texts, int size) {
     texts[1].loadFromFile("sprites/map/1.png");
     texts[14].loadFromFile("sprites/map/14.png");
     texts[15].loadFromFile("sprites/map/15.png");
+    texts[16].loadFromFile("sprites/map/16.png");
+    texts[17].loadFromFile("sprites/map/17.png");
+    texts[18].loadFromFile("sprites/map/18.png");
 }
-
-
-
-
-void updateGhosts(vector<Sprite> &ghostSprites, vector<int> &ghostDirections, 
-                  vector<Texture> &upTextures, vector<Texture> &downTextures, 
-                  vector<Texture> &leftTextures, vector<Texture> &rightTextures, float dt) {
-    static float elapsed_time = 0.0f;
-    elapsed_time += dt;
-
-    if (elapsed_time >= 0.2f) { 
-        elapsed_time = 0.0f; 
-
-        for (size_t i = 0; i < ghostSprites.size(); ++i) {
-            int newX = ghostSprites[i].getPosition().x / 16;
-            int newY = ghostSprites[i].getPosition().y / 16;
-
-            int nextX = newX;
-            int nextY = newY;
-
-            switch (ghostDirections[i]) {
-                case 0: // up
-                    nextY--;
-                    break;
-                case 1: // down
-                    nextY++;
-                    break;
-                case 2: // left
-                    nextX--;
-                    break;
-                case 3: // right
-                    nextX++;
-                    break;
-            }
-
-            if (canMove(nextX, nextY)) {
-                ghostSprites[i].setPosition(nextX * 16, nextY * 16);
-                newX = nextX;
-                newY = nextY;
-            } else {
-                vector<int> validDirections;
-                for (int j = 0; j < 4; j++) {
-                    int dX = (j == 2) ? -1 : (j == 3) ? 1 : 0;
-                    int dY = (j == 0) ? -1 : (j == 1) ? 1 : 0;
-                    if (canMove(newX + dX, newY + dY)) {
-                        validDirections.push_back(j);
-                    }
-                }
-                if (!validDirections.empty()) {
-                    ghostDirections[i] = validDirections[rand() % validDirections.size()];
-                }
-            }
-
-            // Update ghost's texture based on its direction
-            switch (ghostDirections[i]) {
-                case 0:
-                    ghostSprites[i].setTexture(upTextures[i]);
-                    break;
-                case 1:
-                    ghostSprites[i].setTexture(downTextures[i]);
-                    break;
-                case 2:
-                    ghostSprites[i].setTexture(leftTextures[i]);
-                    break;
-                case 3:
-                    ghostSprites[i].setTexture(rightTextures[i]);
-                    break;
-            }
-        }
-    }
-}
-
-
-// void movePlayer(Sprite &playerSprite, Keyboard::Key direction) {
-//     int newX = playerSprite.getPosition().x / 16;
-//     int newY = playerSprite.getPosition().y / 16;
-//     switch (direction) {
-//         case Keyboard::Up:
-//             if (canMove(newX, newY - 1)){
-//                 playerSprite.move(0, -16);
-//                 CollectPallets(newX , newY - 1);
-//             }
-//             break;
-//         case Keyboard::Down:
-//             if (canMove(newX, newY + 1)){
-//                 playerSprite.move(0, 16);
-//                 CollectPallets(newX , newY + 1);
-//             }
-//             break;
-//         case Keyboard::Left:
-//             if (newX <= 0){
-//                 playerSprite.move(26*16,0);
-//                 CollectPallets(26 , newY);
-//             }
-//             else if (canMove(newX - 1, newY)){
-//                 playerSprite.move(-16, 0);
-//                 CollectPallets(newX - 1, newY);
-//             }
-//             break;
-//         case Keyboard::Right:
-//             if (newX >= 26){
-//                 playerSprite.move(-26*16,0);
-//                 CollectPallets(0, newY);
-//             }
-//             else if (canMove(newX + 1, newY)){
-//                 playerSprite.move(16, 0);
-//                 CollectPallets(newX + 1, newY);
-//             }
-//             break;
-//     }
-// }
-
-// void movePlayer(Sprite &playerSprite, Keyboard::Key keyPressed) {
-//     int newX = playerSprite.getPosition().x / 16;
-//     int newY = playerSprite.getPosition().y / 16;
-//     switch (keyPressed) {
-//         case Keyboard::Up:
-//             newY--;
-//             break;
-//         case Keyboard::Down:
-//             newY++;
-//             break;
-//         case Keyboard::Left:
-//             newX--;
-//             break;
-//         case Keyboard::Right:
-//             newX++;
-//             break;
-//     }
-//     if (canMove(newX, newY)) {
-//         playerSprite.setPosition(newX * 16, newY * 16);
-//         CollectPallets(newX, newY);
-//     } else {
-//         if((playerSprite.getPosition().x / 16) == 26 && (newX == 27)){
-//                 playerSprite.setPosition(0, newY * 16);
-//         }
-//         else if((playerSprite.getPosition().x / 16) == 0 && (newX == -1)){
-//             playerSprite.setPosition(26 * 16,newY * 16);
-//         }
-//     }
-//     cout<<newX << " "<<newY<<endl;
-//     cout<<"Position : "<<playerSprite.getPosition().x / 16 <<" "<<playerSprite.getPosition().y /16<<endl;
-// }
-
-
 
 
 int main() {
-    sf::RenderWindow window(sf::VideoMode(576, 432), "Pacman");
+    srand(time(0));
     window.setFramerateLimit(120);
 
+    sem_init(&playerPath,0,1);
+    sem_init(&key,0,2);
+    sem_init(&permit,0,2);
+    sem_init(&SpeedGhost,0,2);
     // Map textures
-    int noTextures = 18;
+    int noTextures = 19;
     sf::Texture *mapText = new sf::Texture[noTextures];
     loadMapTextures(mapText, noTextures);
+
+//PWOER PELLETS
+
 
     sf::Sprite *mapSprites = new sf::Sprite[noTextures];
     for (int i = 0; i < noTextures; i++) {
@@ -307,46 +545,28 @@ int main() {
     }
     ifs.close();
 
-    // Print map array
-    // for (int i = 0; i < mapSize; i++) {
-    //     for (int j = 0; j < mapSize; j++) {
-    //         if(mapArray[i][j] < 10)
-    //             cout <<"0"<< mapArray[i][j] << " ";
-    //         else
-    //             cout << mapArray[i][j] << " ";
-    //     }
-    //     cout << endl;
-    // }
-
     // Create ghosts
-    const int numGhosts = 4;
-    vector<Sprite> ghostSprites(numGhosts);
-    vector<Texture> upTextures(numGhosts), downTextures(numGhosts), 
-                    leftTextures(numGhosts), rightTextures(numGhosts);
-    vector<int> ghostDirections(numGhosts, 0); // 0: up, 1: down, 2: left, 3: right
-
-    for (int i = 0; i < numGhosts; ++i) {
-        upTextures[i].loadFromFile("sprites/str.png");
-        downTextures[i].loadFromFile("sprites/str.png");
-        leftTextures[i].loadFromFile("sprites/str.png");
-        rightTextures[i].loadFromFile("sprites/str.png");
-        ghostSprites[i].setTexture(upTextures[i]);
+    
+    pthread_t tid[numGhosts];
+    Texture ghostTexture;
+    ghostTexture.loadFromFile("sprites/str.png");
+    Texture ghostFrightenedTexture;
+    ghostFrightenedTexture.loadFromFile("sprites/ghostblue.png");
+    for (int i = 0; i < numGhosts; i++) 
+    {
+        ghosts[i].initGhost(Vector2i(13 + i, 13), ghostTexture, ghostFrightenedTexture);
+        int* ghostIndex = new int(i);
+        pthread_create(&tid[i], NULL, ghostMovement, (void*)ghostIndex);
     }
 
-    ghostSprites[0].setPosition(((mapSize/2) + 1 )* 16, ((mapSize/2) + 1)* 16);
-    ghostSprites[1].setPosition(100 , 400);
-    ghostSprites[2].setPosition(100 , 99);
-    ghostSprites[3].setPosition(100 , 99);
-
-
+    
     // Player (Pacman) setup
     Texture pacmanTexture;
     pacmanTexture.loadFromFile("sprites/player.png");
-    // Sprite pacmanSprite;
-    // pacmanSprite.setTexture(pacmanTexture);
-    // pacmanSprite.setPosition(400, 100);
-    Player pacman(Vector2i(13,23),Vector2i(0,0),0,0,50.f,pacmanTexture);
+    pacman.initPlayer(Vector2i(13,23),Vector2i(0,0),0,0,50.f,pacmanTexture);
 
+    pthread_t playerThreadID;
+    pthread_create(&playerThreadID , NULL , playerManagement , NULL);
 
 
     int lives = 3;
@@ -370,9 +590,49 @@ int main() {
     // Main loop
     sf::Clock dtClock;
     while (window.isOpen() && lives>=0) {
-        //cout<<"x:"<<pacmanSprite.getPosition().x<<"  y:"<<pacmanSprite.getPosition().y;
+
+     if (!pacman.powerMode) {
+        for (int i = 0; i < numGhosts; ++i) {
+            ghosts[i].frightened = false; // Set all ghosts to not frightened
+        }
+    }   
+        mtx.lock();
+        if (!location.empty() && curr_power_pellets==0) 
+        {
+            Vector2i currentPos = location.front();
+            location.pop();
+            cout<<"y: "<<currentPos.y<<"x: "<<currentPos.y;
+            if (mapArray[currentPos.y][currentPos.x] == 1) {
+                // Respawn a power pellet at the current position
+                curr_power_pellets++;
+                mapArray[currentPos.y][currentPos.x] = 15;
+            }
+        }
+        mtx.unlock();
+        //cout<<"x:"<<pacman.sprite.getPosition().x<<"  y:"<<pacman.sprite.getPosition().y;
+
+    for (int i = 0; i < numGhosts; ++i) {
+        if (!pacman.powerMode) {
+            ghosts[i].sprite.setTexture(ghosts[i].normalTexture);
+        } else {
+            // If the player is in power-up mode, keep the ghost in the frightened state
+            // Ensure this logic is already implemented elsewhere in your code
+        }
+    }
 
         dt = dtClock.restart().asSeconds();
+
+        pacman.updatePowerMode();
+        for (int i = 0; i < numGhosts; ++i) {
+            ghosts[i].updateFrightenedMode();
+        }
+
+        if (pacman.powerMode) {
+            for (int i = 0; i < numGhosts; ++i) {
+                ghosts[i].frightened = true;
+                ghosts[i].frightenedClock.restart();
+            }
+        }
 
         sf::Event sfEvent;
         while (window.pollEvent(sfEvent)) {
@@ -389,15 +649,24 @@ int main() {
         }
 
         // Update ghosts
-        updateGhosts(ghostSprites, ghostDirections, upTextures, downTextures, leftTextures, rightTextures, dt);
-        pacman.playerMove();
+        //updateGhosts(ghostSprites, ghostDirections, upTextures, downTextures, leftTextures, rightTextures, dt);
+        //pacman.playerMove();
+        
         // Check collisions with ghosts
-        for (size_t i = 0; i < ghostSprites.size(); ++i) {
-            if (pacman.sprite.getGlobalBounds().intersects(ghostSprites[i].getGlobalBounds())) {
+    for (size_t i = 0; i < numGhosts; ++i) {
+        if (pacman.sprite.getGlobalBounds().intersects(ghosts[i].sprite.getGlobalBounds())) {
+            if (pacman.powerMode && ghosts[i].frightened) {
+                ghosts[i].resetPosition(); 
+                ghosts[i].keyFlag=false;
+                ghosts[i].permitFlag=false;
+            
+                score += 20;
+            } else {
                 lives--;
                 pacman.killPlayer();
             }
         }
+    }
 
 
 
@@ -407,7 +676,7 @@ int main() {
 
         for (int i = 0; i < mapSize; i++) {
             for (int j = 0; j < mapSize; j++) {
-                if(mapArray[i][j] == 14){
+                if(mapArray[i][j] == 14 || mapArray[i][j] == 16 || mapArray[i][j] == 17 || mapArray[i][j] == 18){
                     mapSprites[1].setPosition(j*16,i*16);
                     window.draw(mapSprites[1]);
                 }
@@ -423,7 +692,7 @@ int main() {
         window.draw(pacman.sprite);
 
         for (int i = 0; i < numGhosts; ++i) {
-            window.draw(ghostSprites[i]);
+            window.draw(ghosts[i].sprite);
         }
 
         // Draw lives
