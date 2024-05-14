@@ -11,11 +11,9 @@ const int mapSize = 27;
 int mapArray[mapSize][mapSize];
 float dt;
 float powerPallet = 0;
-
 int score = 0;
+
 bool canMove(int x, int y) {
-    // if (x < 0 || x >= mapSize || y < 0 || y >= mapSize)
-    //     return false;
     return (mapArray[y][x] == 1) || (mapArray[y][x] == 14) || (mapArray[y][x] == 15);
 }
 
@@ -36,50 +34,92 @@ struct Player{
         this->sprite.setPosition(pos.x * 16,pos.y * 16);
     }
     void playerMove(){
-        int newX = ceil(sprite.getPosition().x / 16);
-        int newY = ceil(sprite.getPosition().y / 16);
-        if(Keyboard::isKeyPressed(Keyboard::W) && canMove(targetPos.x , targetPos.y)){
-            cout<<"W Pressed"<<endl;
-            targetDir = 1;  //UP
-            newY--;
-            targetPos.y--;
+        if(mapArray[pos.y][pos.x] == 14){
+            score++;
+            mapArray[pos.y][pos.x] = 1;
         }
-        else if(Keyboard::isKeyPressed(Keyboard::S) && canMove(targetPos.x , targetPos.y)){
-            targetDir = 2;  //Down
-            newY++;
+        if(pos.x == 26 && dir == 4){
+            pos.x = 0;
+            sprite.setPosition(0,sprite.getPosition().y);
+            return;
         }
-        else if(Keyboard::isKeyPressed(Keyboard::A)){
-            targetDir = 3;  //Left
-            newX--;
+        else if(pos.x == 0 && dir == 3){
+            pos.x = 26;
+            sprite.setPosition(26 * 16 , sprite.getPosition().y);
+            return;
         }
-        else if(Keyboard::isKeyPressed(Keyboard::D)){
-            targetDir = 4;  //Right
-            newX++;
-        }
-        cout<<newX << " "<<newY<<endl;
-        if(canMove(targetPos.x , targetPos.y)){
-            cout<<"Moved "<<dir<<endl;
+        if(canMove(pos.x+targetPos.x,pos.y+targetPos.y)){
             dir = targetDir;
         }
-        
 
-
-        if(dir == 1){
-            if(canMove( floor(sprite.getPosition().x / 16), floor(sprite.getPosition().y / 16) ) ){
-                float x = sprite.getPosition().x;
-                float y = sprite.getPosition().y;
-                y = y - (dt* speed);
-                sprite.setPosition(x,y);
+        switch (dir)
+        {
+        case 1:
+            if(canMove(pos.x , pos.y - 1)){
+                if(sprite.getPosition().y / 16 < pos.y - 1)
+                    pos.y--;
+                sprite.move(0 , speed * -dt);
             }
-        }
-        else if(dir == 2 && canMove( floor(sprite.getPosition().x / 16), floor(sprite.getPosition().y / 16) )){
-            float x = sprite.getPosition().x;
-            float y = sprite.getPosition().y;
-            y = y + (dt* speed);
-            sprite.setPosition(x,y);
+            break;
+        case 2:
+            if(canMove(pos.x , pos.y + 1)){
+                if(sprite.getPosition().y / 16 > pos.y + 1)
+                    pos.y++;
+                sprite.move(0 , speed * dt);
+            }
+            break;
+        case 3:
+            if(canMove(pos.x - 1 , pos.y)){
+                if(sprite.getPosition().x / 16 < pos.x - 1)
+                    pos.x--;
+                sprite.move(speed * -dt , 0);
+            }
+            break;
+        case 4:
+            if(canMove(pos.x + 1 , pos.y)){
+                if(sprite.getPosition().x / 16 > pos.x + 1)
+                    pos.x++;
+                sprite.move(speed * dt , 0);
+            }
+            break;
+        default:
+            break;
         }
     }
+
+    void setTarget(Keyboard::Key key){
+        if(Keyboard::isKeyPressed(Keyboard::W)){
+            targetPos.x = 0;
+            targetPos.y = -1;
+            targetDir = 1; 
+        }
+        if(Keyboard::isKeyPressed(Keyboard::S)){
+            targetPos.x = 0;
+            targetPos.y = +1;
+            targetDir = 2; 
+        }
+        if(Keyboard::isKeyPressed(Keyboard::A)){
+            targetPos.x = -1;
+            targetPos.y = 0;
+            targetDir = 3; 
+        }
+        if(Keyboard::isKeyPressed(Keyboard::D)){
+            targetPos.x = 1;
+            targetPos.y = 0;
+            targetDir = 4; 
+        }
+    }
+    void killPlayer(){
+        sprite.setPosition(13 * 16,23 * 16);
+        targetDir = 0;
+        targetPos.x = 0;
+        targetPos.y = 0;
+        pos.x = 13;
+        pos.y = 23;
+        dir = 0;
+    }
 };
+
 
 
 // Load map textures
@@ -91,12 +131,7 @@ void loadMapTextures(sf::Texture *&texts, int size) {
 }
 
 
-void CollectPallets(int x , int y){
-    if(mapArray[y][x] == 14){
-        score++;
-        mapArray[y][x] = 1;
-    }
-}
+
 
 void updateGhosts(vector<Sprite> &ghostSprites, vector<int> &ghostDirections, 
                   vector<Texture> &upTextures, vector<Texture> &downTextures, 
@@ -206,38 +241,37 @@ void updateGhosts(vector<Sprite> &ghostSprites, vector<int> &ghostDirections,
 //     }
 // }
 
-void movePlayer(Sprite &playerSprite, Keyboard::Key keyPressed) {
-    int newX = playerSprite.getPosition().x / 16;
-    int newY = playerSprite.getPosition().y / 16;
-    switch (keyPressed) {
-        case Keyboard::Up:
-            newY--;
-            break;
-        case Keyboard::Down:
-            newY++;
-            break;
-        case Keyboard::Left:
-            newX--;
-            break;
-        case Keyboard::Right:
-            newX++;
-            break;
-    }
-    if (canMove(newX, newY)) {
-        
-        playerSprite.setPosition(newX * 16, newY * 16);
-        CollectPallets(newX, newY);
-    } else {
-        if((playerSprite.getPosition().x / 16) == 26 && (newX == 27)){
-                playerSprite.setPosition(0, newY * 16);
-        }
-        else if((playerSprite.getPosition().x / 16) == 0 && (newX == -1)){
-            playerSprite.setPosition(26 * 16,newY * 16);
-        }
-    }
-    cout<<newX << " "<<newY<<endl;
-    cout<<"Position : "<<playerSprite.getPosition().x / 16 <<" "<<playerSprite.getPosition().y /16<<endl;
-}
+// void movePlayer(Sprite &playerSprite, Keyboard::Key keyPressed) {
+//     int newX = playerSprite.getPosition().x / 16;
+//     int newY = playerSprite.getPosition().y / 16;
+//     switch (keyPressed) {
+//         case Keyboard::Up:
+//             newY--;
+//             break;
+//         case Keyboard::Down:
+//             newY++;
+//             break;
+//         case Keyboard::Left:
+//             newX--;
+//             break;
+//         case Keyboard::Right:
+//             newX++;
+//             break;
+//     }
+//     if (canMove(newX, newY)) {
+//         playerSprite.setPosition(newX * 16, newY * 16);
+//         CollectPallets(newX, newY);
+//     } else {
+//         if((playerSprite.getPosition().x / 16) == 26 && (newX == 27)){
+//                 playerSprite.setPosition(0, newY * 16);
+//         }
+//         else if((playerSprite.getPosition().x / 16) == 0 && (newX == -1)){
+//             playerSprite.setPosition(26 * 16,newY * 16);
+//         }
+//     }
+//     cout<<newX << " "<<newY<<endl;
+//     cout<<"Position : "<<playerSprite.getPosition().x / 16 <<" "<<playerSprite.getPosition().y /16<<endl;
+// }
 
 
 
@@ -311,7 +345,7 @@ int main() {
     // Sprite pacmanSprite;
     // pacmanSprite.setTexture(pacmanTexture);
     // pacmanSprite.setPosition(400, 100);
-    Player pacman(Vector2i(13,23),Vector2i(13,23),0,0,50.f,pacmanTexture);
+    Player pacman(Vector2i(13,23),Vector2i(0,0),0,0,50.f,pacmanTexture);
 
 
 
@@ -347,7 +381,9 @@ int main() {
             if (sfEvent.type == sf::Event::KeyPressed) {
                 if (sfEvent.key.code == sf::Keyboard::Escape)
                     window.close();
+                
 
+                pacman.setTarget(sfEvent.key.code);
                 //movePlayer(pacmanSprite, sfEvent.key.code);
             }
         }
@@ -359,7 +395,7 @@ int main() {
         for (size_t i = 0; i < ghostSprites.size(); ++i) {
             if (pacman.sprite.getGlobalBounds().intersects(ghostSprites[i].getGlobalBounds())) {
                 lives--;
-                pacman.sprite.setPosition(400, 100);
+                pacman.killPlayer();
             }
         }
 
