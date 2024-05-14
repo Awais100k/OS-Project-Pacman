@@ -2,6 +2,7 @@
 #include <fstream>
 #include <iostream>
 #include <vector>
+#include <cmath>
 
 using namespace std;
 using namespace sf;
@@ -12,6 +13,73 @@ float dt;
 float powerPallet = 0;
 
 int score = 0;
+bool canMove(int x, int y) {
+    // if (x < 0 || x >= mapSize || y < 0 || y >= mapSize)
+    //     return false;
+    return (mapArray[y][x] == 1) || (mapArray[y][x] == 14) || (mapArray[y][x] == 15);
+}
+
+struct Player{
+    Vector2i pos;
+    Vector2i targetPos;
+    int dir;
+    int targetDir;
+    float speed;
+    Sprite sprite;
+    Player(Vector2i pos,Vector2i target_pos, int dir , int target_dir , float speed , Texture& texture){
+        this->pos = pos;
+        this->dir = dir;
+        this->targetPos = target_pos;
+        this->targetDir = target_dir;
+        this->speed = speed;
+        this->sprite.setTexture(texture);
+        this->sprite.setPosition(pos.x * 16,pos.y * 16);
+    }
+    void playerMove(){
+        int newX = ceil(sprite.getPosition().x / 16);
+        int newY = ceil(sprite.getPosition().y / 16);
+        if(Keyboard::isKeyPressed(Keyboard::W) && canMove(targetPos.x , targetPos.y)){
+            cout<<"W Pressed"<<endl;
+            targetDir = 1;  //UP
+            newY--;
+            targetPos.y--;
+        }
+        else if(Keyboard::isKeyPressed(Keyboard::S) && canMove(targetPos.x , targetPos.y)){
+            targetDir = 2;  //Down
+            newY++;
+        }
+        else if(Keyboard::isKeyPressed(Keyboard::A)){
+            targetDir = 3;  //Left
+            newX--;
+        }
+        else if(Keyboard::isKeyPressed(Keyboard::D)){
+            targetDir = 4;  //Right
+            newX++;
+        }
+        cout<<newX << " "<<newY<<endl;
+        if(canMove(targetPos.x , targetPos.y)){
+            cout<<"Moved "<<dir<<endl;
+            dir = targetDir;
+        }
+        
+
+
+        if(dir == 1){
+            if(canMove( floor(sprite.getPosition().x / 16), floor(sprite.getPosition().y / 16) ) ){
+                float x = sprite.getPosition().x;
+                float y = sprite.getPosition().y;
+                y = y - (dt* speed);
+                sprite.setPosition(x,y);
+            }
+        }
+        else if(dir == 2 && canMove( floor(sprite.getPosition().x / 16), floor(sprite.getPosition().y / 16) )){
+            float x = sprite.getPosition().x;
+            float y = sprite.getPosition().y;
+            y = y + (dt* speed);
+            sprite.setPosition(x,y);
+        }
+    }
+};
 
 
 // Load map textures
@@ -22,11 +90,7 @@ void loadMapTextures(sf::Texture *&texts, int size) {
     texts[15].loadFromFile("sprites/map/15.png");
 }
 
-bool canMove(int x, int y) {
-    // if (x < 0 || x >= mapSize || y < 0 || y >= mapSize)
-    //     return false;
-    return (mapArray[y][x] == 1) || (mapArray[y][x] == 14) || (mapArray[y][x] == 15);
-}
+
 void CollectPallets(int x , int y){
     if(mapArray[y][x] == 14){
         score++;
@@ -143,7 +207,7 @@ void updateGhosts(vector<Sprite> &ghostSprites, vector<int> &ghostDirections,
 // }
 
 void movePlayer(Sprite &playerSprite, Keyboard::Key keyPressed) {
-     int newX = playerSprite.getPosition().x / 16;
+    int newX = playerSprite.getPosition().x / 16;
     int newY = playerSprite.getPosition().y / 16;
     switch (keyPressed) {
         case Keyboard::Up:
@@ -179,7 +243,7 @@ void movePlayer(Sprite &playerSprite, Keyboard::Key keyPressed) {
 
 
 int main() {
-    sf::RenderWindow window(sf::VideoMode(576, 800), "Pacman");
+    sf::RenderWindow window(sf::VideoMode(576, 432), "Pacman");
     window.setFramerateLimit(120);
 
     // Map textures
@@ -210,15 +274,15 @@ int main() {
     ifs.close();
 
     // Print map array
-    for (int i = 0; i < mapSize; i++) {
-        for (int j = 0; j < mapSize; j++) {
-            if(mapArray[i][j] < 10)
-                cout <<"0"<< mapArray[i][j] << " ";
-            else
-                cout << mapArray[i][j] << " ";
-        }
-        cout << endl;
-    }
+    // for (int i = 0; i < mapSize; i++) {
+    //     for (int j = 0; j < mapSize; j++) {
+    //         if(mapArray[i][j] < 10)
+    //             cout <<"0"<< mapArray[i][j] << " ";
+    //         else
+    //             cout << mapArray[i][j] << " ";
+    //     }
+    //     cout << endl;
+    // }
 
     // Create ghosts
     const int numGhosts = 4;
@@ -244,9 +308,13 @@ int main() {
     // Player (Pacman) setup
     Texture pacmanTexture;
     pacmanTexture.loadFromFile("sprites/player.png");
-    Sprite pacmanSprite;
-    pacmanSprite.setTexture(pacmanTexture);
-    pacmanSprite.setPosition(400, 100);
+    // Sprite pacmanSprite;
+    // pacmanSprite.setTexture(pacmanTexture);
+    // pacmanSprite.setPosition(400, 100);
+    Player pacman(Vector2i(13,23),Vector2i(13,23),0,0,50.f,pacmanTexture);
+
+
+
     int lives = 3;
 
 
@@ -280,18 +348,18 @@ int main() {
                 if (sfEvent.key.code == sf::Keyboard::Escape)
                     window.close();
 
-                movePlayer(pacmanSprite, sfEvent.key.code);
+                //movePlayer(pacmanSprite, sfEvent.key.code);
             }
         }
 
         // Update ghosts
         updateGhosts(ghostSprites, ghostDirections, upTextures, downTextures, leftTextures, rightTextures, dt);
-        
+        pacman.playerMove();
         // Check collisions with ghosts
         for (size_t i = 0; i < ghostSprites.size(); ++i) {
-            if (pacmanSprite.getGlobalBounds().intersects(ghostSprites[i].getGlobalBounds())) {
+            if (pacman.sprite.getGlobalBounds().intersects(ghostSprites[i].getGlobalBounds())) {
                 lives--;
-                pacmanSprite.setPosition(400, 100);
+                pacman.sprite.setPosition(400, 100);
             }
         }
 
@@ -316,7 +384,7 @@ int main() {
             }
         }
 
-        window.draw(pacmanSprite);
+        window.draw(pacman.sprite);
 
         for (int i = 0; i < numGhosts; ++i) {
             window.draw(ghostSprites[i]);
